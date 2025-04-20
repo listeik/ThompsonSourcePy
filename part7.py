@@ -25,6 +25,8 @@ from part5 import LinearChartParam
 from part6 import ThompsonSource, Vector
 
 from typing import List, Optional
+import matplotlib
+matplotlib.use('Qt5Agg')
 
 from PyQt5.QtGui import QIntValidator
 import logging
@@ -74,7 +76,7 @@ class MyTextUtilities:
 class CalcBoxParam(QObject):
     MIN_DIF = 1.0E-10
 
-    def __init__(self, keys: List[str], parent=None):
+    def __init__(self, keys: List[str], parent):
         super().__init__(parent)
         self.keys = keys
         self.valueUnitLabels: List[str] = []
@@ -100,18 +102,28 @@ class CalcBoxParam(QObject):
         self.parent = parent
 
     def initialize(self):
+        print("aaaa")
         self.working = True
         try:
             self.tsourceclone = self.parent.tsource.clone()
         except:
             self.tsourceclone = ThompsonSource(self.parent.lpulse, self.parent.ebunch)
+            print("a")
 
+
+        print("bbbbvb")
         self.tsourceclone.seteSpread(self.espread)
+        print("bbbbb")
         self.minValueClone = self.minValue
+        print("bbbbb")
         self.maxValueClone = self.maxValue
+        print("bbbbb")
         self.angleclone = self.angle
         self.energyclone = self.energy
         self.selectedItemIndexClone = self.selectedItemIndex
+        print("bbbbb")
+
+
 
     def save(self):
         options = QFileDialog.Options()
@@ -151,11 +163,35 @@ class CalcBoxParam(QObject):
 
 class ConcreteColorChartParam(ColorChartParam):
     def __init__(self, func):
+        """
+        Initialize with a function that takes (x, y) and returns a float.
+        The actual grid parameters will be set later via setup().
+        """
         super().__init__()
-        self._func = func
+        self._func = func  # Store the function to use in func()
+
+        # Default values that will be used when setup() is called
+        self._default_xsize = 300
+        self._default_ysize = 200
+        self._default_xstep = 20.0 / self._default_xsize
+        self._default_ystep = 20.0 / self._default_ysize
+        # self._default_xoffset = 0.0
+        # self._default_yoffset = 0.0
 
     def func(self, x: float, y: float) -> float:
+        """Implementation of the abstract method"""
         return self._func(x, y)
+
+    def initialize_with_defaults(self,default_xoffset,default_yoffset):
+        """Helper method to setup with default values"""
+        self.setup(
+            xsize=self._default_xsize,
+            ysize=self._default_ysize,
+            xstep=self._default_xstep,
+            ystep=self._default_ystep,
+            xoffset=default_xoffset,
+            yoffset=default_yoffset
+        )
 
 
 class ThomsonJFrame(QMainWindow):
@@ -201,6 +237,26 @@ class ThomsonJFrame(QMainWindow):
         self.initUI()
         self.initChartParams()
         self.loadParameters()
+        # Создаём цветовую карту
+        self.color_chart = None  # Будет инициализирована позже
+
+        # Инициализация графиков
+        self.init_color_chart()
+
+    def init_color_chart(self):
+        """Инициализирует ColorChart во вкладке Flux."""
+        # Проверяем, что панель существует
+        if hasattr(self, 'jPanel_xflux_left'):
+            # Создаём цветовую карту (аналог Java-версии)
+            self.color_chart = ColorChart(
+                data=self.fluxdata,  # Ваш ColorChartParam
+                xlabel='θ_x (mrad)',
+                ylabel='θ_y (mrad)',
+                colorbar_label='Flux (ph/s/mrad²)',
+                parent_panel=self.jPanel_xflux_left,
+                fraction=0.8,
+                slider=True
+            )
 
     def _init_forms(self):
         self.brilForm = CalcBoxParam(["Spectral brilliance"], self)
@@ -254,13 +310,24 @@ class ThomsonJFrame(QMainWindow):
         ]
 
     def initChartParams(self):
+        # Initialize fluxdata with proper setup
         self.fluxdata = ConcreteColorChartParam(
             lambda thetax, thetay: 9.999999999999999E-14 * self.tsource.direction_flux(
                 Vector(thetax * 0.001, thetay * 0.001, 1.0).normalize(),
                 Vector(0.0, 0.0, 1.0)
             )
         )
+        self.fluxdata.initialize_with_defaults(0.0,0.0)  # This sets up the grid parameters
 
+        self.xenergydata = ConcreteColorChartParam(
+            lambda thetax, thetay: self.tsource.direction_energy(
+                Vector(thetax * 0.001, thetay * 0.001, 1.0).normalize(),
+                Vector(0.0, 0.0, 1.0)
+            ) / 1.602E-19 * 0.001
+        )
+        self.xenergydata.initialize_with_defaults(0.0,0.0)
+
+        # Similarly for other chart params
         self.fluxcrossdata = ConcreteColorChartParam(
             lambda e, theta: 1.0E-16 * self.tsource.geometric_factor *
                              self.tsource.direction_frequency_flux_no_spread(
@@ -269,21 +336,11 @@ class ThomsonJFrame(QMainWindow):
                                  e * 1.602E-19
                              )
         )
+        self.fluxcrossdata.initialize_with_defaults(self.xenergydata.func(self.hoffset,0.0)*1000.0,0.0)
 
-        self.xenergydata = ConcreteColorChartParam(
-            lambda thetax, thetay: self.tsource.direction_energy(
-                Vector(thetax * 0.001, thetay * 0.001, 1.0).normalize(),
-                Vector(0.0, 0.0, 1.0)
-            ) / 1.602E-19 * 0.001
-        )
+
 
         self.xenergycrossdata = LinearChartParam()
-        # # Create matplotlib figure and canvas
-        # self.figure = Figure()
-        # self.canvas = FigureCanvas(self.figure)
-        #
-        # # Add canvas to the main panel
-        # self.jPanel_xflux_left.layout().addWidget(self.canvas)
 
     def BrillianceCalcStartActionPerformed(self, evt=None):
         self.brilForm.initialize()
@@ -357,6 +414,7 @@ class ThomsonJFrame(QMainWindow):
         self.plotGFChart()
 
     def plotGFChart(self):
+        print("Plotting GF...")
         self.gf_figure.clear()
         ax = self.gf_figure.add_subplot(111)
 
@@ -467,6 +525,28 @@ class ThomsonJFrame(QMainWindow):
                     pass
             except Exception as e:
                 QMessageBox.warning(self, "Load Error", f"Failed to load parameters: {str(e)}")
+
+    def GFCalcBoxActionPerformed(self, index=None):
+        if index is None:
+            index = self.GFCalcBox.currentIndex()
+        self.gfForm.selectedItemIndex = index
+
+    def GFminvalueFocusLost(self):
+        val = MyTextUtilities.test_value(0, 1000, self.GFminvalue, "0")
+        self.gfForm.minValue = val
+
+    def GFmaxvalueFocusLost(self):
+        val = MyTextUtilities.test_value(0, 1000, self.GFmaxvalue, "60")
+        self.gfForm.maxValue = val
+
+    def GFValueSelectionBoxActionPerformed(self, index=None):
+        if index is None:
+            index = self.GFValueSelectionBox.currentIndex()
+        # В этом методе пока можно ничего не делать — индекс используется при построении графика
+        pass
+
+    def GFCalcSaveActionPerformed(self, evt=None):
+        self.gfForm.save()
 
     def createBrillianceCalcFrame(self):
         self.brillianceCalc = QFrame()
@@ -633,18 +713,16 @@ class ThomsonJFrame(QMainWindow):
         self.GFCalcGraph = QGroupBox("Full flux")
         self.GFCalcGraph.setMinimumSize(418, 216)
 
-        # Main layout for gfCalc
-        main_layout = QVBoxLayout()
-        main_layout.addWidget(self.GFParam)
-        main_layout.addWidget(self.GFCalcGraph)
-
-        # Create figure and canvas for GF plot
         self.gf_figure = Figure()
         self.gf_canvas = FigureCanvas(self.gf_figure)
 
         gf_layout = QVBoxLayout()
         gf_layout.addWidget(self.gf_canvas)
         self.GFCalcGraph.setLayout(gf_layout)
+
+        main_layout = QVBoxLayout()
+        main_layout.addWidget(self.GFParam)
+        main_layout.addWidget(self.GFCalcGraph)
 
         self.gfCalc.setLayout(main_layout)
 
@@ -996,46 +1074,89 @@ class ThomsonJFrame(QMainWindow):
         self.jPanel_xflux = QWidget()
         self.jPanel_xflux.setLayout(QHBoxLayout())
 
+        # Left panel for the flux chart
         self.jPanel_xflux_left = QWidget()
-        self.jPanel_xflux_left.setMinimumSize(362, 318)
-        self.jPanel_xflux.layout().addWidget(self.jPanel_xflux_left)
+        self.jPanel_xflux_left.setLayout(QVBoxLayout())
 
+        # Create figure and canvas
+        self.figure = Figure(figsize=(6, 4), dpi=100)  # Фиксированный размер
+        self.canvas = FigureCanvas(self.figure)
+        self.jPanel_xflux_left.layout().addWidget(self.canvas)
+
+        # Right panel (optional, for controls)
         self.jPanel_xflux_right = QWidget()
         self.jPanel_xflux_right.setMinimumSize(309, 318)
+
+        self.jPanel_xflux.layout().addWidget(self.jPanel_xflux_left)
         self.jPanel_xflux.layout().addWidget(self.jPanel_xflux_right)
 
         self.jTabbedPane1.addTab(self.jPanel_xflux, "Flux")
 
-        # Energy tab
-        self.jPanel_xenergy = QWidget()
-        self.jPanel_xenergy.setLayout(QHBoxLayout())
+        # Отрисовка пустого графика при старте
+        self.drawEmptyChart()
 
-        self.jPanel_xenergy_left = QWidget()
-        self.jPanel_xenergy_left.setMinimumSize(362, 318)
-        self.jPanel_xenergy.layout().addWidget(self.jPanel_xenergy_left)
+    def drawEmptyChart(self):
+        """Отрисовка пустого графика до начала расчётов."""
+        self.figure.clear()
+        ax = self.figure.add_subplot(111)
+        ax.text(0.5, 0.5, "Данные не загружены.\nНажмите 'Start' для расчётов.",
+                ha='center', va='center', fontsize=12)
+        ax.set_axis_off()
+        self.canvas.draw()
 
-        self.jPanel_xenergy_right = QWidget()
-        self.jPanel_xenergy_right.setMinimumSize(309, 318)
-        self.jPanel_xenergy.layout().addWidget(self.jPanel_xenergy_right)
+    def drawCharts(self):
+        """Отрисовывает график с учётом текущего hoffset."""
+        if not hasattr(self, 'color_chart'):
+            self.init_color_chart()
 
-        self.jTabbedPane1.addTab(self.jPanel_xenergy, "Energy")
+        if self.color_chart:
+            self.color_chart.full_update(
+                data=self.fluxdata,
+                xlabel='θ_x (mrad)',
+                ylabel='θ_y (mrad)',
+                colorbar_label='Flux (ph/s/mrad²)'
+            )
 
     def createSliderPanel(self):
-        self.jPanel_slider = QWidget()
 
-        self.jSlider_pickup = QSlider(Qt.Horizontal)
-        self.jSlider_pickup.valueChanged.connect(self.jSlider_pickupStateChanged)
+            self.jPanel_slider = QWidget()
+            layout = QHBoxLayout()
 
-        self.totalFluxLabel = QLabel("Total flux:")
-        self.totalFluxAngleLabel = QLabel("Within limits: ")
+            # Slider для выбора сечения
+            self.jSlider_pickup = QSlider(Qt.Horizontal)
+            self.jSlider_pickup.setRange(0, 100)
+            self.jSlider_pickup.setValue(50)
+            self.jSlider_pickup.setTickInterval(10)
+            self.jSlider_pickup.setTickPosition(QSlider.TicksBelow)
 
-        # Layout
-        layout = QHBoxLayout()
-        layout.addWidget(self.jSlider_pickup)
-        layout.addWidget(self.totalFluxLabel)
-        layout.addWidget(self.totalFluxAngleLabel)
+            # Связываем слоты (обновляем график при отпускании слайдера)
+            self.jSlider_pickup.sliderReleased.connect(self.updateGraphFromSlider)
 
-        self.jPanel_slider.setLayout(layout)
+            # Текстовые метки
+            self.totalFluxLabel = QLabel("Total flux: N/A")
+            self.totalFluxAngleLabel = QLabel("Slice at: 0 mrad")
+
+            layout.addWidget(self.jSlider_pickup)
+            layout.addWidget(self.totalFluxLabel)
+            layout.addWidget(self.totalFluxAngleLabel)
+            self.jPanel_slider.setLayout(layout)
+
+    def updateGraphFromSlider(self):
+        """Обновляет график при перемещении слайдера."""
+        if self.working:
+            return  # Если идёт расчёт, не прерываем его
+
+        # Получаем значение слайдера (0-100)
+        slider_pos = self.jSlider_pickup.value()
+
+        # Пересчитываем hoffset (смещение для сечения)
+        self.hoffset = (slider_pos - 50) * (self.xsize * self.xstep) / 100.0
+
+        # Обновляем текст
+        self.totalFluxAngleLabel.setText(f"Slice at: {self.hoffset:.2f} mrad")
+
+        # Перерисовываем график
+        self.drawCharts()
 
     def createMenuBar(self):
         self.jMenuBarMain = QMenuBar()
@@ -1263,8 +1384,7 @@ class ThomsonJFrame(QMainWindow):
     def GFCalcBoxActionPerformed(self, evt):
         pass
 
-    def GFCalcStartActionPerformed(self, evt):
-        pass
+
 
     def GFCalcSaveActionPerformed(self, evt):
         pass
@@ -1628,7 +1748,7 @@ class ThomsonJFrame(QMainWindow):
         <h2>Thomson Scattering Simulation</h2>
         <p>Version: 1.0</p>
         <p>Build date: {}</p>
-        <p>Author: Your Name</p>
+        <p>Author: Nabieva Diana</p>
         <p>This software simulates Thomson scattering processes.</p>
         """.format(datetime.now().strftime("%Y-%m-%d"))
 
@@ -1643,47 +1763,57 @@ class ThomsonJFrame(QMainWindow):
         self.drawCharts()
 
     def drawCharts(self):
-        # Clear the figure
+        def drawCharts(self):
+            """Отрисовывает график с учётом текущего hoffset."""
+            try:
+                self.figure.clear()
+                ax = self.figure.add_subplot(111)
+
+                # Если данных нет — рисуем заглушку
+                if not hasattr(self, 'fluxdata') or self.fluxdata.udata is None:
+                    ax.text(0.5, 0.5, "Данные не загружены.\nНажмите 'Start' для расчётов.",
+                            ha='center', va='center', fontsize=12)
+                    ax.set_axis_off()
+                    self.canvas.draw()
+                    return
+
+                # Расчёт данных с учётом hoffset
+                x = np.linspace(-self.xsize * self.xstep / 2, self.xsize * self.xstep / 2, self.xsize)
+                y = np.linspace(-self.ysize * self.ystep / 2, self.ysize * self.ystep / 2, self.ysize)
+                X, Y = np.meshgrid(x, y)
+
+                # Векторизованный расчёт (быстрее, чем циклы)
+                Z = np.vectorize(lambda x, y: self.fluxdata.func(self.hoffset + x, y))(X, Y)
+
+                # Отрисовка
+                cmap = LinearSegmentedColormap.from_list("jet", ["blue", "cyan", "yellow", "red"])
+                im = ax.imshow(
+                    Z,
+                    cmap=cmap,
+                    extent=[x[0], x[-1], y[0], y[-1]],
+                    origin='lower',
+                    aspect='auto'
+                )
+
+                # Добавляем цветовую шкалу и подписи
+                self.figure.colorbar(im, ax=ax, label='Flux (ph/s/mrad²)')
+                ax.set_xlabel('Δθ_x (mrad)')
+                ax.set_ylabel('Δθ_y (mrad)')
+                ax.set_title(f'X-ray Flux at θ_x = {self.hoffset:.2f} mrad')
+
+                # Обновляем canvas
+                self.canvas.draw()
+
+            except Exception as e:
+                print(f"[Ошибка] Не удалось обновить график: {e}")
+                self.drawEmptyChart()
+
+    def drawEmptyChart(self):
+        """Отрисовывает пустой график с сообщением."""
         self.figure.clear()
-
-        # Determine the view type
-        view_type = "Color Chart"  # Default, should be replaced with actual combo box value
-
-        if view_type == "Color Chart":
-            # Draw color map
-            ax = self.figure.add_subplot(111)
-            x = np.linspace(0, self.xsize * self.xstep, self.xsize)
-            y = np.linspace(0, self.ysize * self.ystep, self.ysize)
-            X, Y = np.meshgrid(x, y)
-
-            # Get data for the plot
-            Z = np.zeros((self.ysize, self.xsize))
-            for i in range(self.xsize):
-                for j in range(self.ysize):
-                    Z[j, i] = self.fluxdata.func(X[j, i], Y[j, i])
-
-            # Create color map
-            cmap = LinearSegmentedColormap.from_list("jet", ["blue", "cyan", "yellow", "red"])
-            im = ax.imshow(Z, cmap=cmap, extent=[0, self.xsize * self.xstep, 0, self.ysize * self.ystep],
-                           origin='lower', aspect='auto')
-
-            # Add color bar
-            self.figure.colorbar(im, ax=ax, label='Flux (mrad⁻²·s⁻¹·10⁷)')
-            ax.set_xlabel('theta_x (mrad)')
-            ax.set_ylabel('theta_y (mrad)')
-            ax.set_title('Thomson Scattering Flux Distribution')
-
-        elif view_type == "Linear Scale":
-            # Draw linear plot
-            ax = self.figure.add_subplot(111)
-            x = np.linspace(0, self.xsize * self.xstep, self.xsize)
-            y = [self.xenergycrossdata.func(xi) for xi in x]
-            ax.plot(x, y)
-            ax.set_xlabel('theta_y (mrad)')
-            ax.set_ylabel('Energy (keV)')
-            ax.set_title('X-ray Energy Cross Section')
-
-        # Redraw the canvas
+        ax = self.figure.add_subplot(111)
+        ax.text(0.5, 0.5, "Данные не загружены", ha='center', va='center')
+        ax.set_axis_off()
         self.canvas.draw()
 
 
@@ -1748,6 +1878,102 @@ def add_form_row_with_widgets(form_layout, label_widget, *field_widgets):
     container.setLayout(hbox)
     form_layout.addRow(label_widget, container)
 
+
+class ColorChart:
+    def __init__(self, data, xlabel, ylabel, colorbar_label, parent_panel, fraction=0.8, slider=False):
+        self.data = data
+        self.parent_panel = parent_panel
+        self.fraction = fraction
+
+        # Create figure and canvas
+        self.figure = Figure(figsize=(8, 6), dpi=100)
+        self.canvas = FigureCanvas(self.figure)
+
+        # Main plot
+        self.ax = self.figure.add_subplot(111)
+        self.im = None
+        self.colorbar = None
+
+        # Setup layout
+        self.parent_panel.setLayout(QHBoxLayout())
+        self.parent_panel.layout().addWidget(self.canvas)
+
+        # Initial draw
+        self.full_update(data, xlabel, ylabel, colorbar_label)
+
+    def full_update(self, data, xlabel, ylabel, colorbar_label):
+        """Full update of the chart"""
+        self.data = data
+        self.figure.clear()
+
+        # Check for valid dimensions
+        if data.xsize <= 0 or data.ysize <= 0:
+            self._draw_empty("Invalid data dimensions")
+            return
+
+        try:
+            # Create grid
+            x = np.linspace(
+                data.xoffset,
+                data.xoffset + (data.xsize - 1) * data.xstep,
+                data.xsize
+            )
+            y = np.linspace(
+                data.yoffset,
+                data.yoffset + (data.ysize - 1) * data.ystep,
+                data.ysize
+            )
+            X, Y = np.meshgrid(x, y)
+
+            # Calculate Z with vectorized function
+            # Specify otypes to handle empty inputs
+            vectorized_func = np.vectorize(data.func, otypes=[np.float64])
+            Z = vectorized_func(X, Y)
+
+            # Draw plot
+            self.ax = self.figure.add_subplot(111)
+            self.im = self.ax.imshow(
+                Z,
+                cmap='jet',
+                extent=[x[0], x[-1], y[0], y[-1]],
+                origin='lower',
+                aspect='auto'
+            )
+
+            # Set labels
+            self.ax.set_xlabel(xlabel)
+            self.ax.set_ylabel(ylabel)
+
+            # Add colorbar
+            self.colorbar = self.figure.colorbar(self.im, ax=self.ax, label=colorbar_label)
+
+        except Exception as e:
+            self._draw_empty(f"Error: {str(e)}")
+            return
+
+        self.canvas.draw()
+
+    def _draw_empty(self, message):
+        """Draw empty chart with message"""
+        self.figure.clear()
+        ax = self.figure.add_subplot(111)
+        ax.text(0.5, 0.5, message,
+               ha='center', va='center', fontsize=12)
+        ax.set_axis_off()
+        self.canvas.draw()
+
+    def update(self):
+        """Lightweight update without recalculating data"""
+        if self.im:
+            self.im.autoscale()
+            self.canvas.draw()
+
+    def get_figure(self):
+        return self.figure
+
+    def get_canvas(self):
+        return self.canvas
+
 if __name__ == "__main__":
     app = QApplication(sys.argv)
     print("Окно должно отображаться")
@@ -1755,4 +1981,7 @@ if __name__ == "__main__":
     print("Окно должно отображаться")
     window.show()
     print("Окно должно отображаться")
-    sys.exit(app.exec_())
+    try:
+        sys.exit(app.exec_())
+    except Exception as e:
+        print(f"App crashed: {e}")

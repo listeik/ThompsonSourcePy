@@ -24,6 +24,8 @@ class Vector:
     y: float = 0.0
     z: float = 0.0
 
+
+
     def __post_init__(self):
         self._data = np.array([self.x, self.y, self.z])
 
@@ -119,12 +121,15 @@ class ThompsonSource:
         new_copy.thread_number = self.thread_number
         return new_copy
 
+    def clone(self) -> 'ThompsonSource':
+        return self.copy()
+
     # Основные методы расчета
     def calculate_total_flux(self) -> None:
         """Расчет полного потока излучения"""
         denom = math.pi * math.sqrt(
-            (self.lp.get_width(0) + self.eb.get_x_width(0)) *
-            (self.lp.get_width(0) + self.eb.get_y_width(0))
+            (self.lp.get_width_squared(0) + self.eb.get_width_squared(0)) *
+            (self.lp.get_width_squared(0) + self.eb.get_width_squared(0))
         )
         self.total_flux = (self.SIGMA_T * self.eb._number *
                            self.lp.photon_number * self.lp.fq / denom)
@@ -138,9 +143,9 @@ class ThompsonSource:
         cs = math.cos(max_angle)
 
         term1 = (1.0 - cs) / (1.0 - v * cs) / (1.0 - v)
-        term2 = (0.833333 + 0.166667 / v2 -
-                 0.166667 / gamma2 / v2 * (1.0 - v2 * cs) / (1.0 - v) / (1.0 - v * cs))
-        term3 = 0.166667 / gamma2 / v2 * (1.0 - cs * cs) / (1.0 - v * cs) ** 3
+        term2 = (0.8333333333333334 + 0.16666666666666666 / v2 -
+                 0.16666666666666666 / gamma2 / v2 * (1.0 - v2 * cs) / (1.0 - v) / (1.0 - v * cs))
+        term3 = 0.16666666666666666 / gamma2 / v2 * (1.0 - cs * cs) / (1.0 - v * cs) ** 3
 
         return 0.75 / gamma2 * (term1 * term2 + term3) * self.total_flux * self.geometric_factor
 
@@ -153,9 +158,10 @@ class ThompsonSource:
             # Параметры области интегрирования
             mult = 3
             wdx = (mult * self.eb.get_x_width(0) * self.lp.get_width(0) /
-                   math.sqrt(self.eb.get_x_width(0) + self.lp.get_width(0)))
+                   math.sqrt(self.eb.get_x_width_squared(0) + self.lp.get_width_squared(0)))
+
             wdy = (mult * self.eb.get_y_width(0) * self.lp.get_width(0) /
-                   math.sqrt(self.eb.get_y_width(0) + self.lp.get_width(0)))
+                   math.sqrt(self.eb.get_y_width_squared(0) + self.lp.get_width_squared(0)))
             len_ = (mult * self.eb.length * self.lp.length /
                     math.sqrt(self.eb.length ** 2 + self.lp.length ** 2))
 
@@ -205,17 +211,17 @@ class ThompsonSource:
 
         # Расчет экспоненты
         K = ((z + z1 - z0 - self.lp.delay) / len_total) ** 2
-        K += (x - x0) ** 2 / self.eb.get_x_width(z - z0)
-        K += (y - y0) ** 2 / self.eb.get_y_width(z - z0)
+        K += (x - x0) ** 2 / self.eb.get_x_width_squared(z - z0)
+        K += (y - y0) ** 2 / self.eb.get_y_width_squared(z - z0)
         K += (x1 ** 2 + y1 ** 2) / self.lp.get_width(z1)
 
         # Расчет коэффициента
         numerator = 2.0 / math.pi ** 1.5
         numerator *= math.sqrt(
-            (self.lp.get_width(0) + self.eb.get_x_width(0)) *
-            (self.lp.get_width(0) + self.eb.get_y_width(0))
+            (self.lp.get_width_squared(0) + self.eb.get_x_width_squared(0)) *
+            (self.lp.get_width_squared(0) + self.eb.get_y_width_squared(0))
         )
-        numerator /= len_total * self.lp.get_width(z1)
+        numerator /= len_total * self.lp.get_width_squared(z1)
         numerator /= self.eb.get_x_width(z - z0)
         numerator /= self.eb.get_y_width(z - z0)
 
@@ -544,6 +550,9 @@ class ThompsonSource:
             return res if not math.isnan(res) else 0.0
         except:
             return 0.0
+
+    def seteSpread(self, value: bool) -> None:
+        self.e_spread = value
 
     def direction_frequency_flux_spread_monte_carlo(self, n: Vector, v0: Vector, e: float) -> float:
         """Расчет с учетом разброса методом Монте-Карло"""
