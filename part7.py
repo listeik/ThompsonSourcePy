@@ -24,6 +24,8 @@ from part4 import LaserPulse
 from part5 import LinearChartParam
 from part6 import ThompsonSource, Vector
 
+
+import math
 from typing import List, Optional
 import matplotlib
 matplotlib.use('Qt5Agg')
@@ -486,32 +488,26 @@ class ThomsonJFrame(QMainWindow):
         self.setWindowTitle("TSourceXG")
         self.setMinimumSize(750, 600)
 
-        # Create main widgets
+        # Создаем все компоненты
         self.createBrillianceCalcFrame()
-        self.brilliance_figure = Figure()
-        self.brilliance_canvas = FigureCanvas(self.brilliance_figure)
-
-        layout = QVBoxLayout()
-        layout.addWidget(self.brilliance_canvas)
-        self.BrillianceCalcGraph.setLayout(layout)
         self.createGFCalcFrame()
         self.createPolarizationCalcFrame()
         self.createRayProgressFrame()
+
+        # Создаем основные панели
+        self.createElectronBunchPanel()
+        self.createLaserPulsePanel()
+        self.createRelativePositionPanel()
+        self.createExecutionPanel()
+        self.createTabbedPane()
+
+        # Изначально скрываем график
+        self.jTabbedPane1.setVisible(False)
+
+        # Создаем главный layout
         self.createMainContent()
+
         self.createMenuBar()
-
-        # Set central widget
-        central_widget = QWidget()
-        main_layout = QVBoxLayout()
-        central_widget.setLayout(main_layout)  # Сначала установите layout
-
-        scroll_area = QScrollArea()
-        scroll_area.setWidgetResizable(True)
-        scroll_area.setWidget(central_widget)  # Затем добавьте в QScrollArea
-
-        self.setCentralWidget(scroll_area)
-
-
 
 
     def loadParameters(self):
@@ -848,50 +844,33 @@ class ThomsonJFrame(QMainWindow):
         self.rayProgressFrame.setLayout(layout)
 
     def createMainContent(self):
-        # Main panel
-        self.jPanel1 = QWidget()
-        self.jPanel1.setMinimumSize(720, 0)
+        # Главный контейнер
+        main_widget = QWidget()
+        main_layout = QVBoxLayout(main_widget)  # Вертикальное расположение: 3 колонки + график
 
-        # Create electron bunch panel
-        self.createElectronBunchPanel()
-
-        # Create laser pulse panel
-        self.createLaserPulsePanel()
-
-        # Create relative position panel
-        self.createRelativePositionPanel()
-
-        # Create execution panel
-        self.createExecutionPanel()
-
-        # Create tabbed pane
-        self.createTabbedPane()
-
-        # Create slider panel
-        self.createSliderPanel()
-
-        # Main layout
-        main_layout = QVBoxLayout()
-
-        # Top row with parameter panels
+        # --- Первая строка: 3 колонки ---
         top_row = QHBoxLayout()
+
+        # Колонка 1: Electron bunch parameters
         top_row.addWidget(self.jPanel_el)
+
+        # Колонка 2: Laser pulse parameters
         top_row.addWidget(self.jPanel_ph)
 
-        right_column = QVBoxLayout()
-        right_column.addWidget(self.jPanel_sh)
-        right_column.addWidget(self.jPanel_exec)
+        # Колонка 3: Relative position
+        top_row.addWidget(self.jPanel_sh)
 
-        top_row.addLayout(right_column)
         main_layout.addLayout(top_row)
 
-        # Add tabbed pane
+        # --- Вторая строка: Execution (кнопка "Start" и прогресс-бар) ---
+        exec_layout = QHBoxLayout()
+        exec_layout.addWidget(self.jPanel_exec)
+        main_layout.addLayout(exec_layout)
+
+        # --- Третья строка: График (вкладки) ---
         main_layout.addWidget(self.jTabbedPane1)
 
-        # Add slider panel
-        main_layout.addWidget(self.jPanel_slider)
-
-        self.jPanel1.setLayout(main_layout)
+        self.setCentralWidget(main_widget)
 
     def createElectronBunchPanel(self):
         self.jPanel_el = QGroupBox("Electron bunch parameters")
@@ -1057,6 +1036,7 @@ class ThomsonJFrame(QMainWindow):
         self.startbutton.clicked.connect(self.startbuttonActionPerformed)
 
         self.MainProgressBar = QProgressBar()
+        self.MainProgressBar.setValue(0)
 
         # Layout
         layout = QHBoxLayout()
@@ -1064,10 +1044,11 @@ class ThomsonJFrame(QMainWindow):
         layout.addWidget(self.MainProgressBar)
 
         self.jPanel_exec.setLayout(layout)
-        print("Execution panel created")
 
     def createTabbedPane(self):
         self.jTabbedPane1 = QTabWidget()
+        self.jTabbedPane1.setSizePolicy(QSizePolicy.Expanding,
+                                        QSizePolicy.Expanding)  # Растягивается по вертикали и горизонтали
         self.jTabbedPane1.setMinimumSize(713, 500)
 
         # Flux tab
@@ -1530,59 +1511,73 @@ class ThomsonJFrame(QMainWindow):
     def ebetayvalueActionPerformed(self, evt):
         pass
 
-    def startbuttonActionPerformed(self, evt):
+    def startbuttonActionPerformed(self, evt=None):
         if self.working:
-            if self.mainWorker and self.mainWorker.isRunning():
-                self.mainWorker.terminate()
+            # Если расчет уже идет, останавливаем
+            if hasattr(self, 'mainWorker') and self.mainWorker.isRunning():
+                self.mainWorker.stop()
+                self.mainWorker.quit()
+                self.mainWorker.wait()
             self.working = False
             self.startbutton.setText("Start")
             return
 
-        self.working = True
-        self.startbutton.setText("Stop")
+        # Сбрасываем прогресс
         self.MainProgressBar.setValue(0)
 
-        # Update parameters from UI
-        self.updateParametersFromUI()
+        # Показываем график
+        self.jTabbedPane1.setVisible(True)
 
-        # Start calculation in a separate thread
+        # Меняем текст кнопки
+        self.working = True
+        self.startbutton.setText("Stop")
+
+        # Создаем и запускаем worker
         self.mainWorker = CalculationThread(self)
         self.mainWorker.progress_updated.connect(self.updateProgress)
-        self.mainWorker.calculation_finished.connect(self.onCalculationFinished)
+        self.mainWorker.calculation_finished.connect(self.on_calculation_finished)
         self.mainWorker.start()
 
     def updateParametersFromUI(self):
-        # Update electron parameters
-        self.ebunch.gamma = float(self.energyvalue.text()) / 0.5109989461
-        self.ebunch.number = float(self.chargevalue.text()) / 1.602E-19 * 1.0E-9
-        self.ebunch.delgamma = float(self.spreadvalue.text()) / 200.0
-        self.ebunch.length = float(self.elengthvalue.text()) * 3.0E-4 / 2.0
-        self.ebunch.epsx = float(self.eemitxvalue.text()) * 1e-6
-        self.ebunch.epsy = float(self.eemityvalue.text()) * 1e-6
-        self.ebunch.betax = float(self.ebetaxvalue.text()) * 1e-3
-        self.ebunch.betay = float(self.ebetayvalue.text()) * 1e-3
+        """Обновляем все параметры из полей ввода"""
+        try:
+            # Параметры электронного пучка
+            self.ebunch.gamma = float(self.energyvalue.text()) / 0.5109989461
+            self.ebunch.number = float(self.chargevalue.text()) / 1.602E-19 * 1.0E-9
+            self.ebunch.delgamma = float(self.spreadvalue.text()) / 200.0
+            self.ebunch.length = float(self.elengthvalue.text()) * 3.0E-4 / 2.0
+            self.ebunch.epsx = float(self.eemitxvalue.text()) * 1e-6
+            self.ebunch.epsy = float(self.eemityvalue.text()) * 1e-6
+            self.ebunch.betax = float(self.ebetaxvalue.text()) * 1e-3
+            self.ebunch.betay = float(self.ebetayvalue.text()) * 1e-3
 
-        # Update shift
-        self.ebunch.shift = Vector(
-            float(self.eshiftxvalue.text()) * 1e-3,
-            float(self.eshiftyvalue.text()) * 1e-3,
-            float(self.eshiftzvalue.text()) * 1e-3
-        )
+            # Сдвиг пучка
+            self.ebunch.shift = Vector(
+                float(self.eshiftxvalue.text()) * 1e-3,
+                float(self.eshiftyvalue.text()) * 1e-3,
+                float(self.eshiftzvalue.text()) * 1e-3
+            )
 
-        # Update laser parameters
-        self.lpulse.photon_energy = float(self.phenergyvalue.text()) * 1.602E-19
-        self.lpulse.pulse_energy = float(self.pulseenergyvalue.text()) * 0.001
-        self.lpulse.length = float(self.pulselengthvalue.text()) * 3.0E-4 / 2.0
-        self.lpulse.rlength = float(self.pulserelvalue.text()) * 1e-3
-        self.lpulse.fq = float(self.pulsefreqvalue.text())
-        self.lpulse.delay = float(self.pulsedelayvalue.text()) * 1e-3
+            # Параметры лазера
+            self.lpulse.photon_energy = float(self.phenergyvalue.text()) * 1.602E-19
+            self.lpulse.pulse_energy = float(self.pulseenergyvalue.text()) * 0.001
+            self.lpulse.length = float(self.pulselengthvalue.text()) * 3.0E-4 / 2.0
+            self.lpulse.rlength = float(self.pulserelvalue.text()) * 1e-3
+            self.lpulse.fq = float(self.pulsefreqvalue.text())
+            self.lpulse.delay = float(self.pulsedelayvalue.text()) * 1e-3
 
-        # Update laser direction
-        angle = float(self.pulseanglevalue.text()) * 1e-3
-        self.lpulse.direction = Vector(0, math.sin(angle), math.cos(angle))
+            # Направление лазера
+            angle = float(self.pulseanglevalue.text()) * 1e-3
+            self.lpulse.direction = Vector(0, math.sin(angle), math.cos(angle))
 
-        # Recreate ThompsonSource with updated parameters
-        self.tsource = ThompsonSource(self.lpulse, self.ebunch)
+            # Пересоздаем источник с новыми параметрами
+            self.tsource = ThompsonSource(self.lpulse, self.ebunch)
+
+            print("Параметры успешно обновлены!")  # Отладочное сообщение
+
+        except Exception as e:
+            print(f"Ошибка при обновлении параметров: {e}")
+            QMessageBox.critical(self, "Ошибка", f"Неверные параметры: {str(e)}")
 
     def jSlider_pickupStateChanged(self, evt):
         self.sliderposition = self.jSlider_pickup.value()
@@ -1754,59 +1749,134 @@ class ThomsonJFrame(QMainWindow):
 
         QMessageBox.about(self, "About Thomson Simulation", about_text)
 
+
+
     def updateProgress(self, value):
+        """Update the progress bar"""
         self.MainProgressBar.setValue(value)
 
-    def onCalculationFinished(self):
+    def on_calculation_finished(self):
+        """Действия по завершению расчетов"""
         self.working = False
         self.startbutton.setText("Start")
+
+        # Обновляем графики с новыми данными
         self.drawCharts()
 
+    def createXEnergyPanels(self):
+        """Create panels for x-energy charts if they don't exist"""
+        # Add new tab for x-energy if needed
+        if not hasattr(self, 'jPanel_xenergy'):
+            self.jPanel_xenergy = QWidget()
+            self.jPanel_xenergy.setLayout(QHBoxLayout())
+
+            # Left panel for main x-energy chart
+            self.jPanel_xenergy_left = QWidget()
+            self.jPanel_xenergy_left.setLayout(QVBoxLayout())
+
+            # Right panel for cross section
+            self.jPanel_xenergy_right = QWidget()
+            self.jPanel_xenergy_right.setLayout(QVBoxLayout())
+
+            self.jPanel_xenergy.layout().addWidget(self.jPanel_xenergy_left)
+            self.jPanel_xenergy.layout().addWidget(self.jPanel_xenergy_right)
+
+            # Add the new tab
+            self.jTabbedPane1.addTab(self.jPanel_xenergy, "X-ray Energy")
+
+    def createXEnergyCrossChart(self):
+        """Create line chart for x-energy cross section"""
+        if not hasattr(self, 'jPanel_xenergy_right'):
+            self.createXEnergyPanels()
+
+        # Create figure and canvas
+        self.xenergycross_figure = Figure()
+        self.xenergycross_canvas = FigureCanvas(self.xenergycross_figure)
+
+        # Clear any existing widgets
+        for i in reversed(range(self.jPanel_xenergy_right.layout().count())):
+            self.jPanel_xenergy_right.layout().itemAt(i).widget().setParent(None)
+
+        # Add new canvas
+        self.jPanel_xenergy_right.layout().addWidget(self.xenergycross_canvas)
+
+        # Draw initial empty chart
+        self.drawXEnergyCrossChart()
+
+    def drawXEnergyCrossChart(self):
+        """Draw the x-energy cross section line chart"""
+        if not hasattr(self, 'xenergycrossdata') or not hasattr(self, 'xenergycross_figure'):
+            return
+
+        self.xenergycross_figure.clear()
+        ax = self.xenergycross_figure.add_subplot(111)
+
+        try:
+            # Get data from xenergycrossdata
+            x = np.linspace(
+                self.xenergycrossdata.getOffset(),
+                self.xenergycrossdata.getOffset() + self.xenergycrossdata.getSize() * self.xenergycrossdata.getStep(),
+                self.xenergycrossdata.getSize()
+            )
+
+            y = self.xenergycrossdata.getudata()  # Assuming this returns the y-values
+
+            ax.plot(x, y)
+            ax.set_xlabel('theta_y, mrad')
+            ax.set_ylabel('Energy, keV')
+            ax.set_title('Energy Cross Section')
+
+        except Exception as e:
+            ax.text(0.5, 0.5, f"Error drawing chart: {str(e)}",
+                    ha='center', va='center', fontsize=12)
+            ax.set_axis_off()
+
+        self.xenergycross_canvas.draw()
+
     def drawCharts(self):
-        def drawCharts(self):
-            """Отрисовывает график с учётом текущего hoffset."""
-            try:
-                self.figure.clear()
-                ax = self.figure.add_subplot(111)
+        """Отрисовывает график с учётом текущего hoffset."""
+        try:
+            self.figure.clear()
+            ax = self.figure.add_subplot(111)
 
-                # Если данных нет — рисуем заглушку
-                if not hasattr(self, 'fluxdata') or self.fluxdata.udata is None:
-                    ax.text(0.5, 0.5, "Данные не загружены.\nНажмите 'Start' для расчётов.",
-                            ha='center', va='center', fontsize=12)
-                    ax.set_axis_off()
-                    self.canvas.draw()
-                    return
-
-                # Расчёт данных с учётом hoffset
-                x = np.linspace(-self.xsize * self.xstep / 2, self.xsize * self.xstep / 2, self.xsize)
-                y = np.linspace(-self.ysize * self.ystep / 2, self.ysize * self.ystep / 2, self.ysize)
-                X, Y = np.meshgrid(x, y)
-
-                # Векторизованный расчёт (быстрее, чем циклы)
-                Z = np.vectorize(lambda x, y: self.fluxdata.func(self.hoffset + x, y))(X, Y)
-
-                # Отрисовка
-                cmap = LinearSegmentedColormap.from_list("jet", ["blue", "cyan", "yellow", "red"])
-                im = ax.imshow(
-                    Z,
-                    cmap=cmap,
-                    extent=[x[0], x[-1], y[0], y[-1]],
-                    origin='lower',
-                    aspect='auto'
-                )
-
-                # Добавляем цветовую шкалу и подписи
-                self.figure.colorbar(im, ax=ax, label='Flux (ph/s/mrad²)')
-                ax.set_xlabel('Δθ_x (mrad)')
-                ax.set_ylabel('Δθ_y (mrad)')
-                ax.set_title(f'X-ray Flux at θ_x = {self.hoffset:.2f} mrad')
-
-                # Обновляем canvas
+            # Если данных нет — рисуем заглушку
+            if not hasattr(self, 'fluxdata') or self.fluxdata.udata is None:
+                ax.text(0.5, 0.5, "Данные не загружены.\nНажмите 'Start' для расчётов.",
+                        ha='center', va='center', fontsize=12)
+                ax.set_axis_off()
                 self.canvas.draw()
+                return
 
-            except Exception as e:
-                print(f"[Ошибка] Не удалось обновить график: {e}")
-                self.drawEmptyChart()
+            # Расчёт данных с учётом hoffset
+            x = np.linspace(-self.xsize * self.xstep / 2, self.xsize * self.xstep / 2, self.xsize)
+            y = np.linspace(-self.ysize * self.ystep / 2, self.ysize * self.ystep / 2, self.ysize)
+            X, Y = np.meshgrid(x, y)
+
+            # Векторизованный расчёт (быстрее, чем циклы)
+            Z = np.vectorize(lambda x, y: self.fluxdata.func(self.hoffset + x, y))(X, Y)
+
+            # Отрисовка
+            cmap = LinearSegmentedColormap.from_list("jet", ["blue", "cyan", "yellow", "red"])
+            im = ax.imshow(
+                Z,
+                cmap=cmap,
+                extent=[x[0], x[-1], y[0], y[-1]],
+                origin='lower',
+                aspect='auto'
+            )
+
+            # Добавляем цветовую шкалу и подписи
+            self.figure.colorbar(im, ax=ax, label='Flux (ph/s/mrad²)')
+            ax.set_xlabel('Δθ_x (mrad)')
+            ax.set_ylabel('Δθ_y (mrad)')
+            ax.set_title(f'X-ray Flux at θ_x = {self.hoffset:.2f} mrad')
+
+            # Обновляем canvas
+            self.canvas.draw()
+
+        except Exception as e:
+            print(f"[Ошибка] Не удалось обновить график: {e}")
+            self.drawEmptyChart()
 
     def drawEmptyChart(self):
         """Отрисовывает пустой график с сообщением."""
@@ -1835,7 +1905,7 @@ class CalculationThread(QThread):
             self.parent.tsource.calculate_geometric_factor()
             self.progress_updated.emit(50)
 
-            # Setup data for charts
+            # Setup flux data
             self.parent.fluxdata.setup(
                 self.parent.xsize,
                 self.parent.ysize,
@@ -1846,8 +1916,28 @@ class CalculationThread(QThread):
             )
             self.progress_updated.emit(75)
 
-            # Setup cross section data
-            if self.parent.fluxdata.udata is not None:
+            # Setup x-energy data
+            self.parent.xenergydata.setup(
+                self.parent.xsize,
+                self.parent.ysize,
+                self.parent.xstep,
+                self.parent.ystep,
+                0.0,
+                0.0
+            )
+
+            # Setup flux cross data
+            self.parent.fluxcrossdata.setup(
+                self.parent.xsize,
+                self.parent.ysize,
+                self.parent.estep,
+                self.parent.ystep,
+                self.parent.xenergydata.func(self.parent.hoffset, 0.0) * 1000.0,
+                0.0
+            )
+
+            # Setup x-energy cross data
+            if hasattr(self.parent.fluxdata, 'udata') and self.parent.fluxdata.udata is not None:
                 self.parent.xenergycrossdata.setup_from_data(
                     np.array(self.parent.fluxdata.udata),
                     (self.parent.xsize - 1) * self.parent.sliderposition // 100,
